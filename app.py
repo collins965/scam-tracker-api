@@ -6,6 +6,7 @@ from models import Base, TrackLog
 import requests
 import os
 from dotenv import load_dotenv
+from routes import auth  # <-- Import routes here
 
 # Load environment variables
 load_dotenv()
@@ -18,16 +19,19 @@ Base.metadata.create_all(bind=engine)
 
 app = FastAPI()
 
-# Enable CORS for frontend requests (adjust origins as needed)
+# Enable CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, specify your React frontend URL here
+    allow_origins=["*"],  # In production, restrict this
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Dependency to get DB session
+# Add auth router
+app.include_router(auth.router)
+
+# DB Dependency
 def get_db():
     db = SessionLocal()
     try:
@@ -35,12 +39,12 @@ def get_db():
     finally:
         db.close()
 
-# API key verification dependency
+# API key verification
 def verify_api_key(x_api_key: str = Header(...)):
     if x_api_key != API_SECRET_KEY:
         raise HTTPException(status_code=403, detail="Invalid API key")
 
-# Helper function: Get location from IP using ipinfo.io API
+# IP location helper
 def get_location_from_ip(ip: str) -> str:
     try:
         response = requests.get(f"https://ipinfo.io/{ip}/json?token={IPINFO_TOKEN}")
@@ -49,7 +53,7 @@ def get_location_from_ip(ip: str) -> str:
             city = data.get("city", "")
             region = data.get("region", "")
             country = data.get("country", "")
-            loc = data.get("loc", "")  # latitude,longitude
+            loc = data.get("loc", "")
             location_str = ", ".join(filter(None, [city, region, country]))
             if loc:
                 location_str += f" (Coordinates: {loc})"
@@ -60,6 +64,7 @@ def get_location_from_ip(ip: str) -> str:
         print(f"Error fetching location: {e}")
         return "Unknown Location"
 
+# Track endpoint
 @app.post("/track")
 async def track_scammer(
     request: Request,
@@ -84,14 +89,8 @@ async def track_scammer(
     db.refresh(log)
     return {"message": "Tracking log saved", "id": log.id, "location": location}
 
+# Logs endpoint
 @app.get("/logs")
 def get_logs(db: Session = Depends(get_db), api=Depends(verify_api_key)):
     logs = db.query(TrackLog).order_by(TrackLog.timestamp.desc()).all()
     return logs
-
-from fastapi import FastAPI
-from routes import auth
-
-app = FastAPI()
-
-app.include_router(auth.router)
